@@ -10,7 +10,7 @@ const generatePassword = (shortCode, passKey) => {
   const timestamp = moment().format("YYYYMMDDHHmmss");
   return {
     password: Buffer.from(`${shortCode}${passKey}${timestamp}`).toString("base64"),
-    timestamp
+    timestamp,
   };
 };
 
@@ -67,28 +67,31 @@ router.post("/stk", getToken, async (req, res) => {
       process.env.M_PESA_PASSKEY
     );
 
+    // Use Till Number if available, else fallback to Short Code
+    const partyB = process.env.M_PESA_TILL_NUMBER || process.env.M_PESA_SHORT_CODE;
+
     const requestBody = {
       BusinessShortCode: process.env.M_PESA_SHORT_CODE,
       Password: password,
       Timestamp: timestamp,
-      TransactionType: "CustomerPayBillOnline",
+      TransactionType: process.env.M_PESA_TRANSACTION_TYPE || "CustomerPayBillOnline",
       Amount: amount,
       PartyA: formattedPhone,
-      PartyB: process.env.M_PESA_SHORT_CODE,
+      PartyB: partyB,
       PhoneNumber: formattedPhone,
       CallBackURL: process.env.CALLBACK_URL,
-      AccountReference: "PaymentRef", // Better to use something more meaningful
-      TransactionDesc: "Payment for goods/services",
+      AccountReference: process.env.M_PESA_ACCOUNT_REFERENCE || "PaymentRef",
+      TransactionDesc: process.env.M_PESA_TRANSACTION_DESC || "Payment for goods/services",
     };
 
     const response = await axios.post(
-      "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+      `${process.env.BASE_URL}mpesa/stkpush/v1/processrequest`,
       requestBody,
       { 
         headers: { 
           Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        } 
+          'Content-Type': 'application/json',
+        }, 
       }
     );
 
@@ -123,7 +126,6 @@ router.post("/stk", getToken, async (req, res) => {
 // Route to handle callback with basic validation
 router.post("/callback", async (req, res) => {
   try {
-    // Basic validation - you should add more security checks here
     if (!req.body || !req.body.Body) {
       return res.status(400).json({ error: "Invalid callback data" });
     }
@@ -189,12 +191,12 @@ router.post("/stkquery", getToken, async (req, res) => {
     };
 
     const response = await axios.post(
-      "https://api.safaricom.co.ke/mpesa/stkpushquery/v1/query",
+      `${process.env.BASE_URL}mpesa/stkpushquery/v1/query`,
       requestBody,
       {
         headers: {
           Authorization: `Bearer ${req.token}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         },
       }
     );
