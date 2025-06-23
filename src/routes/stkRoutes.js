@@ -2,6 +2,8 @@ import express from "express";
 import axios from "axios";
 import moment from "moment";
 import { getToken } from "../middlewares/tokenMiddleware.js";
+import Stripe from "stripe";
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 const router = express.Router();
 
@@ -229,5 +231,104 @@ router.post("/stkquery", getToken, async (req, res) => {
     });
   }
 });
+
+//card Payment Section
+router.post("/stripe/create-payment-intent", getToken, async (req, res) => {
+  try {
+    const { amount, description, metadata } = req.body;
+    
+    if (!amount || isNaN(amount)) {
+      return res.status(400).json({ error: "Valid amount is required" });
+    }
+
+    // Convert amount to cents (or smallest currency unit)
+    const amountInCents = Math.round(parseFloat(amount) * 100);
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amountInCents,
+      currency: process.env.STRIPE_CURRENCY || "usd",
+      description: description || "Payment for goods/services",
+      metadata: metadata || {},
+      automatic_payment_methods: {
+        enabled: true,
+      },
+    });
+
+    res.status(200).json({
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+    });
+  } catch (error) {
+    console.error("Stripe Payment Intent Error:", error);
+    res.status(500).json({
+      error: "Failed to create payment intent",
+      message: error.message,
+    });
+  }
+});
+
+
+router.post("/stripe/webhook", express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error(`Webhook Error: ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  // Handle specific event types
+  switch (event.type) {
+    case 'payment_intent.succeeded':
+      // eslint-disable-next-line no-case-declarations
+      const paymentIntent = event.data.object;
+      console.log(`PaymentIntent for ${paymentIntent.amount} was successful!`);
+      // Update your database here
+      break;
+    case 'payment_intent.payment_failed':
+      // eslint-disable-next-line no-case-declarations
+      const failedIntent = event.data.object;
+      console.error(`Payment failed: ${failedIntent.last_payment_error?.message}`);
+      break;
+    // Add more event types as needed
+    default:
+      console.log(`Unhandled event type ${event.type}`);
+  }
+
+  res.status(200).json({ received: true });
+});
+
+router.post("/stripe/retrieve-payment", getToken, async (req, res) => {
+  try {
+    const { paymentIntentId } = req.body;
+    
+    if (!paymentIntentId) {
+      return res.status(400).json({ error: "paymentIntentId is required" });
+    }
+
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+    res.status(200).json({
+      status: paymentIntent.status,
+      amount: paymentIntent.amount / 100, // Convert back to dollars
+      currency: paymentIntent.currency,
+      charges: paymentIntent.charges.data,
+    });
+  } catch (error) {
+    console.error("Stripe Retrieve Payment Error:", error);
+    res.status(500).json({
+      error: "Failed to retrieve payment",
+      message: error.message,
+    });
+  }
+});
+
+
 
 export default router;
